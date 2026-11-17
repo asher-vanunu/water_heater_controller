@@ -1,0 +1,44 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+
+// ==========================================
+// הגדרות חומרה ופינים (ESP32)
+// ==========================================
+#define BOOT_BUTTON_PIN     0     // כפתור BOOT מובנה לאיפוס WiFi (לחיצה 3 שניות)
+
+// פיני UART לתקשורת מול שלט הכרומגן
+#define HEATER_UART_RX_PIN  16
+#define HEATER_UART_TX_PIN  17    // שמור להמשך פיתוח (שידור פקודות ישירות)
+#define HEATER_UART_BAUD    9600
+
+// פיני יציאה לטרנזיסטורים (מיתוג הלחצנים לאדמה)
+#define BTN_POWER_PIN       18    // SW1 - ON/OFF
+#define BTN_UP_PIN          19    // SW3 - UP
+#define BTN_DOWN_PIN        21    // SW2 - DOWN
+
+// משך זמן לחיצה מדומה במילישניות
+#define BTN_PRESS_DURATION_MS 150
+
+// ==========================================
+// הגדרות רשת ו-MQTT (עדכן לפי הרשת שלך)
+// ==========================================
+#define AP_HOTSPOT_NAME     "WaterHeater-AP"
+#define OTA_HOSTNAME        "WaterHeater-ESP32"
+
+#define MQTT_SERVER         "10.100.102.27"  // <--- עדכן לכתובת ה-IP של שרת ה-MQTT / HA שלך
+#define MQTT_PORT           1883
+#define MQTT_USER           ""               // השאר ריק אם אין שם משתמש
+#define MQTT_PASSWORD       ""               // השאר ריק אם אין סיסמה
+#define MQTT_CLIENT_ID      "WaterHeater_ESP32"
+
+// טופיקים (MQTT Topics)
+#define TOPIC_AVAILABILITY  "water_heater/status"
+#define TOPIC_CMD_POWER     "water_heater/button/power/set"
+#define TOPIC_CMD_UP        "water_heater/button/up/set"
+#define TOPIC_CMD_DOWN      "water_heater/button/down/set"
+#define TOPIC_CMD_RESET     "water_heater/control/esp_reset/set"
+#define TOPIC_UART_RAW_HEX  "water_heater/uart/raw_hex"
+
+#endif // CONFIG_H
