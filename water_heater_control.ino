@@ -20,11 +20,11 @@ void setup() {
 }
 
 void loop() {
-  // טיפול תמידי ב-OTA ובשחרור הלחצנים
+  // טיפול תמידי ב-OTA ובשחרור לחצנים
   handleOTA();
   handleSwitchs();
 
-  // בזמן צריבת OTA מדלגים על משימות רשת ו-UART למניעת ניתוקים
+  // Skip Tasks while OTA to avoid disconnections 
   if (otaInProgress) {
     return;
   }

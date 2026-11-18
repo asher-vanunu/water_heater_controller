@@ -4,21 +4,21 @@
 #include <Arduino.h>
 
 // ==========================================
-// הגדרות חומרה ופינים (ESP32)
+// ESP32 HW definitions/pin assignment
 // ==========================================
-#define BOOT_BUTTON_PIN     0     // כפתור BOOT מובנה לאיפוס WiFi (לחיצה 3 שניות)
+#define BOOT_BUTTON_PIN     0     // Button to reest pairing(3sec press) כפתור BOOT מובנה לאיפוס WiFi (לחיצה 3 שניות)
 
-// פיני UART לתקשורת מול שלט הכרומגן
-#define HEATER_UART_RX_PIN  16
-#define HEATER_UART_TX_PIN  17    // שמור להמשך פיתוח (שידור פקודות ישירות)
-#define HEATER_UART_BAUD    9600
+// Chromagen PLC/UART
+#define HEATER_UART_RX_PIN  16    // (RX) Recieved data from the main unit
+#define HEATER_UART_TX_PIN  17    // (TX) Transmit data to main unit
+#define HEATER_UART_BAUD    4800  // קצב תקשורת מעודכן: 4800 bps (8N1)
 
-// פיני יציאה לטרנזיסטורים (מיתוג הלחצנים לאדמה)
+// GPI for Button switching
 #define BTN_POWER_PIN       18    // SW1 - ON/OFF
 #define BTN_UP_PIN          19    // SW3 - UP
 #define BTN_DOWN_PIN        21    // SW2 - DOWN
 
-// משך זמן לחיצה מדומה במילישניות
+// Button press duration
 #define BTN_PRESS_DURATION_MS 150
 
 // ==========================================
@@ -27,18 +27,23 @@
 #define AP_HOTSPOT_NAME     "WaterHeater-AP"
 #define OTA_HOSTNAME        "WaterHeater-ESP32"
 
-#define MQTT_SERVER         "10.100.102.27"  // <--- עדכן לכתובת ה-IP של שרת ה-MQTT / HA שלך
+#define MQTT_SERVER         "10.100.102.27"  // MQTT server IP address connecting HA with Heater controller
 #define MQTT_PORT           1883
 #define MQTT_USER           ""               // השאר ריק אם אין שם משתמש
 #define MQTT_PASSWORD       ""               // השאר ריק אם אין סיסמה
 #define MQTT_CLIENT_ID      "WaterHeater_ESP32"
 
-// טופיקים (MQTT Topics)
+// ==========================================
+// MQTT (Topics)
+// ==========================================
 #define TOPIC_AVAILABILITY  "water_heater/status"
+#define TOPIC_UART_RAW_HEX  "water_heater/uart/raw_hex"
+#define TOPIC_STATE_JSON    "water_heater/state"
+
+// פקודות שליטה (זמינות להמשך בשלב ב')
 #define TOPIC_CMD_POWER     "water_heater/button/power/set"
 #define TOPIC_CMD_UP        "water_heater/button/up/set"
 #define TOPIC_CMD_DOWN      "water_heater/button/down/set"
 #define TOPIC_CMD_RESET     "water_heater/control/esp_reset/set"
-#define TOPIC_UART_RAW_HEX  "water_heater/uart/raw_hex"
 
 #endif // CONFIG_H

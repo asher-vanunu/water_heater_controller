@@ -10,7 +10,6 @@ void setupSwitchs() {
   pinMode(BTN_UP_PIN, OUTPUT);
   pinMode(BTN_DOWN_PIN, OUTPUT);
 
-  // וידוא שכל הטרנזיסטורים כבויים באתחול
   digitalWrite(BTN_POWER_PIN, LOW);
   digitalWrite(BTN_UP_PIN, LOW);
   digitalWrite(BTN_DOWN_PIN, LOW);
