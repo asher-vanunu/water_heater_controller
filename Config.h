@@ -9,9 +9,10 @@
 #define BOOT_BUTTON_PIN     0     // Button to reest pairing(3sec press) כפתור BOOT מובנה לאיפוס WiFi (לחיצה 3 שניות)
 
 // Chromagen PLC/UART
-#define HEATER_UART_RX_PIN  16    // (RX) Recieved data from the main unit
-#define HEATER_UART_TX_PIN  17    // (TX) Transmit data to main unit
-#define HEATER_UART_BAUD    4800  // קצב תקשורת מעודכן: 4800 bps (8N1)
+#define HEATER_UART_RX_PIN    16    // (RX) Recieved data from the main unit
+#define HEATER_UART_TX_PIN    17    // (TX) Transmit data to main unit
+#define HEATER_UART_BAUD      4800  // קצב תקשורת מעודכן: 4800 bps (8N1)
+#define UART_PACKET_FLAG_PIN  23    // פין חומרה (GPIO23) שעולה ל-HIGH בתחילת פקטה ויורד ל-LOW בסיומה
 
 // GPI for Button switching
 #define BTN_POWER_PIN       18    // SW1 - ON/OFF

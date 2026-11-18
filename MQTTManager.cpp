@@ -23,12 +23,8 @@ void publishHeaterState(const HeaterStatus& status) {
   const char* hvacMode   = status.isOn ? "heat" : "off";
   const char* hvacAction = !status.isOn ? "off" : (status.isHeating ? "heating" : "idle");
 
-  char errorStr[16];
-  if (status.hasError || status.errorCode > 0) {
-    snprintf(errorStr, sizeof(errorStr), "E%02d", status.errorCode);
-  } else {
-    snprintf(errorStr, sizeof(errorStr), "תקין");
-  }
+  char errorStr[40];
+  formatHeaterErrorText(status.errorCode, errorStr, sizeof(errorStr));
 
   char jsonPayload[320];
   snprintf(jsonPayload, sizeof(jsonPayload),

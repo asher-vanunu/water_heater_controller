@@ -4,19 +4,21 @@
 #include "OTAManager.h"
 #include "MQTTManager.h"
 #include "UARTManager.h"
+#include "WebPortal.h"
 
 void setup() {
-  Serial.begin(115200);
+  WebSerial.begin(115200);
   delay(500);
-  Serial.println("\n==========================================");
-  Serial.println("   Chromagen Water Heater ESP32 Controller");
-  Serial.println("==========================================");
+  WebSerial.println("\n==========================================");
+  WebSerial.println("   Chromagen Water Heater ESP32 Controller");
+  WebSerial.println("==========================================");
 
   setupSwitchs();
   setupUART();
   setupNetwork();
   setupOTA();
   setupMQTT();
+  setupWebPortal();
 }
 
 void loop() {
@@ -33,4 +35,5 @@ void loop() {
   handleNetwork();
   handleMQTT();
   handleUART();
+  handleWebPortal();
 }
