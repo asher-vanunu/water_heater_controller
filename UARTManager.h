@@ -24,5 +24,7 @@ void setupUART();
 void handleUART();
 HeaterStatus getHeaterStatus();
 void formatHeaterErrorText(uint8_t errorCode, char* out, size_t outSize);
+void sendHeaterPowerCommand(bool turnOn);
+void sendHeaterTempCommand(uint8_t targetTemp);
 
 #endif // UART_MANAGER_H

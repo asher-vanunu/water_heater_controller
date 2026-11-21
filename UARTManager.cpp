@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "MQTTManager.h"
 #include "WebPortal.h"
+#include <driver/uart.h>
 
 #define HEADER_STATUS_FRAME   0xF5
 #define STATUS_FRAME_LEN      31
@@ -24,6 +25,18 @@ static uint8_t rawByteCount = 0;
 static HeaterStatus currentStatus = {false, false, false, false, 0, 0, 42, 0, 0, 0, 0, 0, 0};
 static unsigned long lastMqttPublishTime = 0;
 
+// מנגנון תור שידור מסונכרן Half-Duplex (המתנה לסיום קליטת 0xF5 + השהייה)
+struct PendingCommand {
+  bool active;
+  uint8_t frame[COMMAND_FRAME_LEN];
+  uint8_t retriesLeft;
+  bool waitingPostRxDelay;
+  unsigned long rxEndTime;
+  unsigned long lastTxTime;
+};
+
+static PendingCommand pendingCmd = {false, {0}, 0, false, 0, 0};
+
 void setupUART() {
   // הפעלת Pull-up פנימי על פין ה-RX
   pinMode(HEATER_UART_RX_PIN, INPUT_PULLUP);
@@ -32,11 +45,13 @@ void setupUART() {
   pinMode(UART_PACKET_FLAG_PIN, OUTPUT);
   digitalWrite(UART_PACKET_FLAG_PIN, LOW);
 
-  // אתחול UART2 בקצב 4800 baud (8N1) להאזנה בלבד (TX מוגדר כ--1 בשלב זה)
-  Serial2.begin(HEATER_UART_BAUD, SERIAL_8N1, HEATER_UART_RX_PIN, -1);
+  // אתחול UART2 בקצב 4800 baud (8N1) לקליטה ושידור דו-כיווני (Half-Duplex)
+  Serial2.begin(HEATER_UART_BAUD, SERIAL_8N1, HEATER_UART_RX_PIN, HEATER_UART_TX_PIN);
+  // היפוך לוגי על קו ה-TX בלבד (עבור טרנזיסטור NPN Open-Collector)
+  uart_set_line_inverse(UART_NUM_2, UART_SIGNAL_TXD_INV);
 
-  WebSerial.printf("[UART] מאזין לפרוטוקול Chromagen CN1 (0xF5/0xFA) על GPIO%d בקצב %d bps (דגל פקטה: GPIO%d).\n",
-                   HEATER_UART_RX_PIN, HEATER_UART_BAUD, UART_PACKET_FLAG_PIN);
+  WebSerial.printf("[UART] מאזין ומשדר בפרוטוקול Chromagen CN1 (RX: GPIO%d, TX: GPIO%d [Inverted]) בקצב %d bps (דגל פקטה: GPIO%d).\n",
+                   HEATER_UART_RX_PIN, HEATER_UART_TX_PIN, HEATER_UART_BAUD, UART_PACKET_FLAG_PIN);
 }
 
 HeaterStatus getHeaterStatus() {
@@ -53,16 +68,52 @@ void formatHeaterErrorText(uint8_t errorCode, char* out, size_t outSize) {
   }
 }
 
-// אימות Checksum מסוג Two's Complement:
+// חישוב Checksum מסוג Two's Complement:
 // Checksum = (256 - (Sum of Bytes [1 .. N-2] mod 256)) mod 256
-static bool verifyChecksum(const uint8_t* frame, size_t len) {
-  if (len < 3) return false;
+static uint8_t computeChecksum(const uint8_t* frame, size_t len) {
   uint16_t sum = 0;
   for (size_t i = 1; i < len - 1; i++) {
     sum += frame[i];
   }
-  uint8_t calc = (uint8_t)((256 - (sum & 0xFF)) & 0xFF);
-  return (calc == frame[len - 1]);
+  return (uint8_t)((256 - (sum & 0xFF)) & 0xFF);
+}
+
+static bool verifyChecksum(const uint8_t* frame, size_t len) {
+  if (len < 3) return false;
+  return (computeChecksum(frame, len) == frame[len - 1]);
+}
+
+// עיצוב מחרוזת HEX באורך דינמי (מוצהר כאן לשימוש גם בפונקציות השידור)
+static void formatHexString(const uint8_t* frame, size_t len, char* out, size_t outSize);
+
+// בניית פקטת פקודה 0xFA (11 בתים) והכנסתה לתור השידור המסונכרן
+static void queueCommandFrame(uint8_t cmdId, uint8_t powerParam, uint8_t tempParam) {
+  memset(pendingCmd.frame, 0, COMMAND_FRAME_LEN);
+  pendingCmd.frame[0] = HEADER_COMMAND_FRAME;
+  pendingCmd.frame[1] = COMMAND_PAYLOAD_LEN;
+  pendingCmd.frame[2] = 0x21;
+  pendingCmd.frame[3] = cmdId;
+  pendingCmd.frame[4] = powerParam;
+  pendingCmd.frame[5] = tempParam;
+  pendingCmd.frame[10] = computeChecksum(pendingCmd.frame, COMMAND_FRAME_LEN);
+
+  pendingCmd.retriesLeft = UART_TX_MAX_RETRIES;
+  pendingCmd.waitingPostRxDelay = false;
+  pendingCmd.active = true;
+
+  char hexStr[64];
+  formatHexString(pendingCmd.frame, COMMAND_FRAME_LEN, hexStr, sizeof(hexStr));
+  WebSerial.printf("[UART TX] פקודה נוצרה וממתינה לסיום קליטת 0xF5: %s\n", hexStr);
+}
+
+void sendHeaterPowerCommand(bool turnOn) {
+  queueCommandFrame(turnOn ? 0x58 : 0x08, turnOn ? 0x01 : 0x00, 0x00);
+}
+
+void sendHeaterTempCommand(uint8_t targetTemp) {
+  if (targetTemp < 35) targetTemp = 35;
+  if (targetTemp > 70) targetTemp = 70;
+  queueCommandFrame(0x18, 0x00, targetTemp);
 }
 
 static const char* combustionStateName(uint8_t state) {
@@ -91,8 +142,12 @@ static void formatHexString(const uint8_t* frame, size_t len, char* out, size_t 
   }
 }
 
-// פענוח מסגרת פקודה 0xFA (11 בתים) מהשלט
+// פענוח מסגרת פקודה 0xFA (11 בתים) מהשלט (תוך סינון הד מקומי משידור ה-ESP32)
 static void parseCommandFrame(const uint8_t* frame, const char* hexStr, float uptimeSec) {
+  if (pendingCmd.lastTxTime != 0 && (millis() - pendingCmd.lastTxTime < 80)) {
+    return; // התעלמות מהד מקומי (Local Echo) של השידור שלנו
+  }
+
   uint8_t cmdId = frame[3];
   uint8_t powerParam = frame[4];
   uint8_t tempParam = frame[5];
@@ -111,21 +166,21 @@ static void parseCommandFrame(const uint8_t* frame, const char* hexStr, float up
     cmdDesc = "איפוס תקלה";
   }
 
-  WebSerial.printf("\n[UART פקודת שלט 0xFA] %s%s | HEX: %s\n", cmdDesc, detail, hexStr);
+  WebSerial.printf("\n[UART פקודת שלט 0xFA] %s%s\n", cmdDesc, detail);
   publishRawUartHex(hexStr);
 
   if (isPacketLogEnabled()) {
     char portalBuf[256];
     snprintf(portalBuf, sizeof(portalBuf),
-             "[%.1fs] [פקודת שלט 0xFA] %s%s\n  HEX: %s\n--------------------------------------------------\n",
-             uptimeSec, cmdDesc, detail, hexStr);
+             "[%.1fs] [פקודת שלט 0xFA] %s%s\n--------------------------------------------------\n",
+             uptimeSec, cmdDesc, detail);
     appendPacketLog(String(portalBuf));
   }
 }
 
 // פענוח מסגרת סטטוס 0xF5 (31 בתים) מהיחידה החיצונית
 static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float uptimeSec) {
-  WebSerial.printf("\n[UART סטטוס יחידה חיצונית 0xF5] (%s) | HEX: %s\n", msgTypeName(frame[2]), hexStr);
+  WebSerial.printf("\n[UART סטטוס יחידה חיצונית 0xF5] (%s)\n", msgTypeName(frame[2]));
   publishRawUartHex(hexStr);
 
   HeaterStatus newStatus;
@@ -163,15 +218,13 @@ static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float upt
              "[%.1fs] [סטטוס 0xF5 | %s]\n"
              "  מצב: %s | בעירה: %s (0x%02X) | תקלה: 0x%02X (%s)\n"
              "  יעד: %d°C | יוצאים: %d°C | נכנסים: %d°C | גוף: %d°C | מפוח PWM: 0x%02X\n"
-             "  HEX: %s\n"
              "--------------------------------------------------\n",
              uptimeSec, msgTypeName(newStatus.msgType),
              newStatus.isOn ? "דולק (ON)" : "כבוי (OFF)",
              stateDesc, newStatus.statusByte,
              newStatus.errorCode, errorDesc,
              newStatus.targetTemp, newStatus.outletTemp, newStatus.inletTemp, newStatus.bodyTemp,
-             newStatus.burnerPower,
-             hexStr);
+             newStatus.burnerPower);
     appendPacketLog(String(portalBuf));
   }
 
@@ -195,6 +248,18 @@ static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float upt
   if (stateChanged || (millis() - lastMqttPublishTime >= 10000)) {
     publishHeaterState(currentStatus);
     lastMqttPublishTime = millis();
+  }
+
+  // בדיקת תור השידור מיד בסיום קליטת פקטת 0xF5 תקינה
+  if (pendingCmd.active) {
+    if (newStatus.msgType == 0x21) {
+      pendingCmd.active = false;
+      pendingCmd.waitingPostRxDelay = false;
+      WebSerial.println("[UART TX] התקבל אישור פקודה ACK (0x21) מהיחידה הראשית.");
+    } else if (pendingCmd.retriesLeft > 0) {
+      pendingCmd.rxEndTime = millis();
+      pendingCmd.waitingPostRxDelay = true;
+    }
   }
 }
 
@@ -228,11 +293,13 @@ void handleUART() {
 
   // איפוס באפר אם עברו יותר מ-60ms באמצע קליטת פריים (מניעת חוסר סנכרון)
   if (now - lastByteTime > 60) {
+    /*
     if (rawLineActive) {
       WebSerial.println();
       rawLineActive = false;
       rawByteCount = 0;
     }
+    */
     if (rxIndex > 0) {
       rxIndex = 0;
       expectedFrameLen = 0;
@@ -244,7 +311,7 @@ void handleUART() {
     uint8_t b = Serial2.read();
     lastByteTime = millis();
 
-    // הדפסה גולמית של כל בייט שמגיע מה-UART (גם ללא פענוח)
+    /* הדפסה גולמית של כל בייט שמגיע מה-UART (גם ללא פענוח)
     if (!rawLineActive) {
       WebSerial.print("[UART RAW] ");
       rawLineActive = true;
@@ -257,6 +324,7 @@ void handleUART() {
       rawLineActive = false;
       rawByteCount = 0;
     }
+    */
 
     // המתנה לבייט הפתיחה 0xF5 (סטטוס, 31 בתים) או 0xFA (פקודה, 11 בתים)
     if (rxIndex == 0) {
@@ -294,14 +362,37 @@ void handleUART() {
     // ברגע שהצטברו כל בתי הפריים - מורידים את דגל החומרה ומפענחים מיד
     if (rxIndex == expectedFrameLen) {
       digitalWrite(UART_PACKET_FLAG_PIN, LOW);
+      /*
       if (rawLineActive) {
         WebSerial.println();
         rawLineActive = false;
         rawByteCount = 0;
       }
+      */
       parseAndPublishFrame(rxBuffer, expectedFrameLen);
       rxIndex = 0;
       expectedFrameLen = 0;
+    }
+  }
+
+  // שידור פקטת 0xFA בחלון הזמן השקט מיד לאחר סיום קליטת 0xF5 והשהיית 5-10ms
+  if (pendingCmd.active && pendingCmd.waitingPostRxDelay && rxIndex == 0) {
+    if (millis() - pendingCmd.rxEndTime >= UART_TX_POST_RX_DELAY_MS) {
+      pendingCmd.waitingPostRxDelay = false;
+      pendingCmd.lastTxTime = millis();
+
+      Serial2.write(pendingCmd.frame, COMMAND_FRAME_LEN);
+      Serial2.flush();
+
+      char hexStr[64];
+      formatHexString(pendingCmd.frame, COMMAND_FRAME_LEN, hexStr, sizeof(hexStr));
+      WebSerial.printf("[UART TX] שודרה פקודה ליחידה הראשית (%u נותרו): %s\n",
+                       (unsigned)(pendingCmd.retriesLeft - 1), hexStr);
+
+      pendingCmd.retriesLeft--;
+      if (pendingCmd.retriesLeft == 0) {
+        pendingCmd.active = false;
+      }
     }
   }
 }

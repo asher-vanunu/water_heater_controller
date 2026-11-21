@@ -22,6 +22,14 @@
 // Button press duration
 #define BTN_PRESS_DURATION_MS 150
 
+// Buzzer GPIO
+#define BUZZER_PIN            25    // פין GPIO לזמזם חיווי בלחיצת כפתור מ-Home Assistant
+#define BUZZER_DURATION_MS    80    // משך זמזום קצר במילישניות
+
+// UART Half-Duplex TX timing
+#define UART_TX_POST_RX_DELAY_MS  10 // השהייה לאחר סיום קליטת פקטת 0xF5 לפני שידור (10ms)
+#define UART_TX_MAX_RETRIES       10 // מספר שידורים חוזרים עד לקבלת ACK (0x21)
+
 // ==========================================
 // הגדרות רשת ו-MQTT (עדכן לפי הרשת שלך)
 // ==========================================
@@ -41,10 +49,12 @@
 #define TOPIC_UART_RAW_HEX  "water_heater/uart/raw_hex"
 #define TOPIC_STATE_JSON    "water_heater/state"
 
-// פקודות שליטה (זמינות להמשך בשלב ב')
-#define TOPIC_CMD_POWER     "water_heater/button/power/set"
-#define TOPIC_CMD_UP        "water_heater/button/up/set"
-#define TOPIC_CMD_DOWN      "water_heater/button/down/set"
-#define TOPIC_CMD_RESET     "water_heater/control/esp_reset/set"
+// פקודות שליטה (לחצנים ו-Climate מ-Home Assistant)
+#define TOPIC_CMD_POWER        "water_heater/button/power/set"
+#define TOPIC_CMD_UP           "water_heater/button/up/set"
+#define TOPIC_CMD_DOWN         "water_heater/button/down/set"
+#define TOPIC_CMD_CLIMATE_MODE "water_heater/climate/mode/set"
+#define TOPIC_CMD_CLIMATE_TEMP "water_heater/climate/temp/set"
+#define TOPIC_CMD_RESET        "water_heater/control/esp_reset/set"
 
 #endif // CONFIG_H

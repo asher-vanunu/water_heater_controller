@@ -5,16 +5,27 @@ static bool isPressing = false;
 static unsigned long pressStartTime = 0;
 static uint8_t activePin = 0;
 
+static bool isBuzzing = false;
+static unsigned long buzzerStartTime = 0;
+
 void setupSwitchs() {
   pinMode(BTN_POWER_PIN, OUTPUT);
   pinMode(BTN_UP_PIN, OUTPUT);
   pinMode(BTN_DOWN_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
   digitalWrite(BTN_POWER_PIN, LOW);
   digitalWrite(BTN_UP_PIN, LOW);
   digitalWrite(BTN_DOWN_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
 
-  Serial.println("[Switchs] Button GPIOs initialized (LOW/OFF).");
+  Serial.printf("[Switchs] Button GPIOs & Buzzer (GPIO%d) initialized (LOW/OFF).\n", BUZZER_PIN);
+}
+
+void triggerBuzzer() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  buzzerStartTime = millis();
+  isBuzzing = true;
 }
 
 bool triggerButtonPress(HeaterButton btn) {
@@ -48,10 +59,17 @@ bool triggerButtonPress(HeaterButton btn) {
 }
 
 void handleSwitchs() {
-  if (isPressing && (millis() - pressStartTime >= BTN_PRESS_DURATION_MS)) {
+  unsigned long now = millis();
+
+  if (isPressing && (now - pressStartTime >= BTN_PRESS_DURATION_MS)) {
     digitalWrite(activePin, LOW);
     isPressing = false;
     activePin = 0;
     Serial.println("[Switchs] Button released.");
+  }
+
+  if (isBuzzing && (now - buzzerStartTime >= BUZZER_DURATION_MS)) {
+    digitalWrite(BUZZER_PIN, LOW);
+    isBuzzing = false;
   }
 }

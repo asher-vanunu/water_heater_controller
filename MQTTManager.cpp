@@ -68,23 +68,47 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.printf("[MQTT] Message arrived [%s]: %s\n", topic, message);
 
   if (strcmp(topic, TOPIC_CMD_RESET) == 0) {
+    triggerBuzzer();
     delay(100);
     performHardReset();
   }
-  // פקודות לחצנים מוכנות להפעלה בשלב ב'
+  else if (strcmp(topic, TOPIC_CMD_CLIMATE_MODE) == 0) {
+    if (strcmp(message, "heat") == 0) {
+      sendHeaterPowerCommand(true);
+      triggerBuzzer();
+    } else if (strcmp(message, "off") == 0) {
+      sendHeaterPowerCommand(false);
+      triggerBuzzer();
+    }
+  }
+  else if (strcmp(topic, TOPIC_CMD_CLIMATE_TEMP) == 0) {
+    int temp = atoi(message);
+    if (temp >= 35 && temp <= 70) {
+      sendHeaterTempCommand((uint8_t)temp);
+      triggerBuzzer();
+    }
+  }
   else if (strcmp(topic, TOPIC_CMD_POWER) == 0) {
     if (strcmp(message, "PRESS") == 0 || strcmp(message, "ON") == 0) {
-      triggerButtonPress(BTN_POWER);
+      HeaterStatus st = getHeaterStatus();
+      sendHeaterPowerCommand(!st.isOn);
+      triggerBuzzer();
     }
   } 
   else if (strcmp(topic, TOPIC_CMD_UP) == 0) {
     if (strcmp(message, "PRESS") == 0 || strcmp(message, "ON") == 0) {
-      triggerButtonPress(BTN_UP);
+      HeaterStatus st = getHeaterStatus();
+      sendHeaterTempCommand(st.targetTemp + 1);
+      triggerBuzzer();
     }
   } 
   else if (strcmp(topic, TOPIC_CMD_DOWN) == 0) {
     if (strcmp(message, "PRESS") == 0 || strcmp(message, "ON") == 0) {
-      triggerButtonPress(BTN_DOWN);
+      HeaterStatus st = getHeaterStatus();
+      if (st.targetTemp > 35) {
+        sendHeaterTempCommand(st.targetTemp - 1);
+      }
+      triggerBuzzer();
     }
   }
 }
@@ -113,6 +137,8 @@ static void reconnectMQTT() {
         mqttClient.subscribe(TOPIC_CMD_POWER);
         mqttClient.subscribe(TOPIC_CMD_UP);
         mqttClient.subscribe(TOPIC_CMD_DOWN);
+        mqttClient.subscribe(TOPIC_CMD_CLIMATE_MODE);
+        mqttClient.subscribe(TOPIC_CMD_CLIMATE_TEMP);
         mqttClient.subscribe(TOPIC_CMD_RESET);
 
         // פרסום מיידי של הסטטוס האחרון הידוע ברגע החיבור

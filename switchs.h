@@ -13,5 +13,6 @@ enum HeaterButton {
 void setupSwitchs();
 void handleSwitchs();
 bool triggerButtonPress(HeaterButton btn);
+void triggerBuzzer();
 
 #endif // SWITCHS_H
