@@ -12,18 +12,24 @@ void setupSwitchs() {
   pinMode(BTN_POWER_PIN, OUTPUT);
   pinMode(BTN_UP_PIN, OUTPUT);
   pinMode(BTN_DOWN_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
 
   digitalWrite(BTN_POWER_PIN, LOW);
   digitalWrite(BTN_UP_PIN, LOW);
   digitalWrite(BTN_DOWN_PIN, LOW);
-  digitalWrite(BUZZER_PIN, LOW);
 
-  Serial.printf("[Switchs] Button GPIOs & Buzzer (GPIO%d) initialized (LOW/OFF).\n", BUZZER_PIN);
+  ledcAttach(BUZZER_PIN, BUZZER_PWM_FREQ, 8);
+  ledcWrite(BUZZER_PIN, 0);
+
+  Serial.printf("[Switchs] Button GPIOs & Buzzer PWM (GPIO%d, %dHz, %d%%) initialized.\n",
+                BUZZER_PIN, BUZZER_PWM_FREQ, BUZZER_INTENSITY);
 }
 
 void triggerBuzzer() {
-  digitalWrite(BUZZER_PIN, HIGH);
+  uint8_t intensity = constrain(BUZZER_INTENSITY, 0, 100);
+  if (intensity == 0) return;
+
+  uint8_t duty = (uint8_t)map(intensity, 0, 100, 0, 255);
+  ledcWrite(BUZZER_PIN, duty);
   buzzerStartTime = millis();
   isBuzzing = true;
 }
@@ -69,7 +75,7 @@ void handleSwitchs() {
   }
 
   if (isBuzzing && (now - buzzerStartTime >= BUZZER_DURATION_MS)) {
-    digitalWrite(BUZZER_PIN, LOW);
+    ledcWrite(BUZZER_PIN, 0);
     isBuzzing = false;
   }
 }

@@ -30,12 +30,10 @@ struct PendingCommand {
   bool active;
   uint8_t frame[COMMAND_FRAME_LEN];
   uint8_t retriesLeft;
-  bool waitingPostRxDelay;
-  unsigned long rxEndTime;
   unsigned long lastTxTime;
 };
 
-static PendingCommand pendingCmd = {false, {0}, 0, false, 0, 0};
+static PendingCommand pendingCmd = {false, {0}, 0, 0};
 
 void setupUART() {
   // הפעלת Pull-up פנימי על פין ה-RX
@@ -98,7 +96,6 @@ static void queueCommandFrame(uint8_t cmdId, uint8_t powerParam, uint8_t tempPar
   pendingCmd.frame[10] = computeChecksum(pendingCmd.frame, COMMAND_FRAME_LEN);
 
   pendingCmd.retriesLeft = UART_TX_MAX_RETRIES;
-  pendingCmd.waitingPostRxDelay = false;
   pendingCmd.active = true;
 
   char hexStr[64];
@@ -107,7 +104,7 @@ static void queueCommandFrame(uint8_t cmdId, uint8_t powerParam, uint8_t tempPar
 }
 
 void sendHeaterPowerCommand(bool turnOn) {
-  queueCommandFrame(turnOn ? 0x58 : 0x08, turnOn ? 0x01 : 0x00, 0x00);
+  queueCommandFrame(0x08, turnOn ? 0x01 : 0x00, 0x00);
 }
 
 void sendHeaterTempCommand(uint8_t targetTemp) {
@@ -142,10 +139,16 @@ static void formatHexString(const uint8_t* frame, size_t len, char* out, size_t 
   }
 }
 
-// פענוח מסגרת פקודה 0xFA (11 בתים) מהשלט (תוך סינון הד מקומי משידור ה-ESP32)
+// פענוח מסגרת פקודה 0xFA (11 בתים) מהשלט (כולל חיווי הד מקומי לאימות שידור ה-ESP32)
 static void parseCommandFrame(const uint8_t* frame, const char* hexStr, float uptimeSec) {
   if (pendingCmd.lastTxTime != 0 && (millis() - pendingCmd.lastTxTime < 80)) {
-    return; // התעלמות מהד מקומי (Local Echo) של השידור שלנו
+    WebSerial.printf("[UART TX הד מקומי תקין] %s\n", hexStr);
+    if (isPacketLogEnabled()) {
+      char echoBuf[160];
+      snprintf(echoBuf, sizeof(echoBuf), "[%.1fs] [הד מקומי TX תקין 0xFA] %s\n", uptimeSec, hexStr);
+      appendPacketLog(String(echoBuf));
+    }
+    return;
   }
 
   uint8_t cmdId = frame[3];
@@ -179,8 +182,41 @@ static void parseCommandFrame(const uint8_t* frame, const char* hexStr, float up
 }
 
 // פענוח מסגרת סטטוס 0xF5 (31 בתים) מהיחידה החיצונית
-static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float uptimeSec) {
+static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float uptimeSec, unsigned long frameEndTime) {
+  // טיפול מיידי בשידור 0xFA לפני הדפסות WebSerial ו-MQTT כדי לשמור על השהייה מדויקת של 5ms
+  bool txTriggered = false;
+  uint8_t txRetriesRemaining = 0;
+  bool ackReceived = false;
+
+  if (pendingCmd.active) {
+    if (frame[2] == 0x21) {
+      ackReceived = true;
+    }
+    if (pendingCmd.retriesLeft > 0) {
+      while (millis() - frameEndTime < UART_TX_POST_RX_DELAY_MS) {
+        delayMicroseconds(200);
+      }
+      pendingCmd.lastTxTime = millis();
+      Serial2.write(pendingCmd.frame, COMMAND_FRAME_LEN);
+      pendingCmd.retriesLeft--;
+      txRetriesRemaining = pendingCmd.retriesLeft;
+      txTriggered = true;
+      if (pendingCmd.retriesLeft == 0) {
+        pendingCmd.active = false;
+      }
+    }
+  }
+
   WebSerial.printf("\n[UART סטטוס יחידה חיצונית 0xF5] (%s)\n", msgTypeName(frame[2]));
+  if (ackReceived) {
+    WebSerial.println("[UART TX] התקבל אישור פקודה ACK (0x21) מהיחידה הראשית.");
+  }
+  if (txTriggered) {
+    char txHex[64];
+    formatHexString(pendingCmd.frame, COMMAND_FRAME_LEN, txHex, sizeof(txHex));
+    WebSerial.printf("[UART TX] שודרה פקודה ליחידה הראשית (%u נותרו): %s\n",
+                     (unsigned)txRetriesRemaining, txHex);
+  }
   publishRawUartHex(hexStr);
 
   HeaterStatus newStatus;
@@ -249,22 +285,10 @@ static void parseStatusFrame(const uint8_t* frame, const char* hexStr, float upt
     publishHeaterState(currentStatus);
     lastMqttPublishTime = millis();
   }
-
-  // בדיקת תור השידור מיד בסיום קליטת פקטת 0xF5 תקינה
-  if (pendingCmd.active) {
-    if (newStatus.msgType == 0x21) {
-      pendingCmd.active = false;
-      pendingCmd.waitingPostRxDelay = false;
-      WebSerial.println("[UART TX] התקבל אישור פקודה ACK (0x21) מהיחידה הראשית.");
-    } else if (pendingCmd.retriesLeft > 0) {
-      pendingCmd.rxEndTime = millis();
-      pendingCmd.waitingPostRxDelay = true;
-    }
-  }
 }
 
 // פענוח פריים מלא (0xF5 או 0xFA)
-static void parseAndPublishFrame(const uint8_t* frame, size_t len) {
+static void parseAndPublishFrame(const uint8_t* frame, size_t len, unsigned long frameEndTime) {
   char hexStr[120];
   formatHexString(frame, len, hexStr, sizeof(hexStr));
 
@@ -282,7 +306,7 @@ static void parseAndPublishFrame(const uint8_t* frame, size_t len) {
   }
 
   if (frame[0] == HEADER_STATUS_FRAME) {
-    parseStatusFrame(frame, hexStr, uptimeSec);
+    parseStatusFrame(frame, hexStr, uptimeSec, frameEndTime);
   } else if (frame[0] == HEADER_COMMAND_FRAME) {
     parseCommandFrame(frame, hexStr, uptimeSec);
   }
@@ -361,6 +385,7 @@ void handleUART() {
 
     // ברגע שהצטברו כל בתי הפריים - מורידים את דגל החומרה ומפענחים מיד
     if (rxIndex == expectedFrameLen) {
+      unsigned long frameEndTime = millis();
       digitalWrite(UART_PACKET_FLAG_PIN, LOW);
       /*
       if (rawLineActive) {
@@ -369,30 +394,9 @@ void handleUART() {
         rawByteCount = 0;
       }
       */
-      parseAndPublishFrame(rxBuffer, expectedFrameLen);
+      parseAndPublishFrame(rxBuffer, expectedFrameLen, frameEndTime);
       rxIndex = 0;
       expectedFrameLen = 0;
-    }
-  }
-
-  // שידור פקטת 0xFA בחלון הזמן השקט מיד לאחר סיום קליטת 0xF5 והשהיית 5-10ms
-  if (pendingCmd.active && pendingCmd.waitingPostRxDelay && rxIndex == 0) {
-    if (millis() - pendingCmd.rxEndTime >= UART_TX_POST_RX_DELAY_MS) {
-      pendingCmd.waitingPostRxDelay = false;
-      pendingCmd.lastTxTime = millis();
-
-      Serial2.write(pendingCmd.frame, COMMAND_FRAME_LEN);
-      Serial2.flush();
-
-      char hexStr[64];
-      formatHexString(pendingCmd.frame, COMMAND_FRAME_LEN, hexStr, sizeof(hexStr));
-      WebSerial.printf("[UART TX] שודרה פקודה ליחידה הראשית (%u נותרו): %s\n",
-                       (unsigned)(pendingCmd.retriesLeft - 1), hexStr);
-
-      pendingCmd.retriesLeft--;
-      if (pendingCmd.retriesLeft == 0) {
-        pendingCmd.active = false;
-      }
     }
   }
 }

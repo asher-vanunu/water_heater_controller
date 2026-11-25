@@ -7,6 +7,7 @@
 
 static WiFiClient espClient;
 static PubSubClient mqttClient(espClient);
+static unsigned long mqttConnectedTime = 0;
 
 void publishRawUartHex(const char* hexString) {
   if (WiFi.status() != WL_CONNECTED || !mqttClient.connected()) return;
@@ -66,6 +67,12 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
   message[length] = '\0';
 
   Serial.printf("[MQTT] Message arrived [%s]: %s\n", topic, message);
+
+  // התעלמות מהודעות Retained ישנות שמגיעות מהברוקר מיד בעת החיבור/עליית ה-ESP32
+  if (millis() - mqttConnectedTime < 1500) {
+    Serial.println("[MQTT] Ignored startup/retained message during connect grace period.");
+    return;
+  }
 
   if (strcmp(topic, TOPIC_CMD_RESET) == 0) {
     triggerBuzzer();
@@ -132,7 +139,16 @@ static void reconnectMQTT() {
 
       if (connected) {
         Serial.println("Connected!");
+        mqttConnectedTime = millis();
         mqttClient.publish(TOPIC_AVAILABILITY, "online", true);
+
+        // ניקוי הודעות Retained ישנות אם קיימות על נושאי הפקודות בברוקר
+        mqttClient.publish(TOPIC_CMD_POWER, "", true);
+        mqttClient.publish(TOPIC_CMD_UP, "", true);
+        mqttClient.publish(TOPIC_CMD_DOWN, "", true);
+        mqttClient.publish(TOPIC_CMD_CLIMATE_MODE, "", true);
+        mqttClient.publish(TOPIC_CMD_CLIMATE_TEMP, "", true);
+        mqttClient.publish(TOPIC_CMD_RESET, "", true);
 
         mqttClient.subscribe(TOPIC_CMD_POWER);
         mqttClient.subscribe(TOPIC_CMD_UP);

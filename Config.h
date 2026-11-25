@@ -22,13 +22,15 @@
 // Button press duration
 #define BTN_PRESS_DURATION_MS 150
 
-// Buzzer GPIO
+// Buzzer GPIO & PWM Intensity
 #define BUZZER_PIN            25    // פין GPIO לזמזם חיווי בלחיצת כפתור מ-Home Assistant
 #define BUZZER_DURATION_MS    80    // משך זמזום קצר במילישניות
+#define BUZZER_PWM_FREQ       2500  // תדר PWM בהרץ (Hz)
+#define BUZZER_INTENSITY      50    // עוצמת הזמזום באחוזים (0 = מושתק, 100 = עוצמה מלאה)
 
 // UART Half-Duplex TX timing
-#define UART_TX_POST_RX_DELAY_MS  10 // השהייה לאחר סיום קליטת פקטת 0xF5 לפני שידור (10ms)
-#define UART_TX_MAX_RETRIES       10 // מספר שידורים חוזרים עד לקבלת ACK (0x21)
+#define UART_TX_POST_RX_DELAY_MS  15 // השהייה לאחר סיום קליטת פקטת 0xF5 לפני שידור (15ms)
+#define UART_TX_MAX_RETRIES       28 // מספר שידורים חוזרים עד לקבלת ACK (0x21)
 
 // ==========================================
 // הגדרות רשת ו-MQTT (עדכן לפי הרשת שלך)
